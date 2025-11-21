@@ -4,6 +4,10 @@ import {
   TakeScreenshotSchema,
   ReadElectronLogsSchema,
   GetElectronWindowInfoSchema,
+  RunPerformanceSnapshotSchema,
+  RunAutomationScriptSchema,
+  RunDevToolsTraceSchema,
+  CaptureNetworkSnapshotSchema,
   ToolInput,
 } from './schemas';
 
@@ -13,6 +17,10 @@ export enum ToolName {
   TAKE_SCREENSHOT = 'take_screenshot',
   READ_ELECTRON_LOGS = 'read_electron_logs',
   GET_ELECTRON_WINDOW_INFO = 'get_electron_window_info',
+  RUN_PERFORMANCE_SNAPSHOT = 'run_performance_snapshot',
+  RUN_AUTOMATION_SCRIPT = 'run_automation_script',
+  RUN_DEVTOOLS_TRACE = 'run_devtools_trace',
+  CAPTURE_NETWORK_SNAPSHOT = 'capture_network_snapshot',
 }
 
 // Define tools available to the MCP server
@@ -28,6 +36,18 @@ export const tools = [
     description:
       'Take a screenshot of any running Electron application window. Returns base64 image data for AI analysis. No files created unless outputPath is specified.',
     inputSchema: zodToJsonSchema(TakeScreenshotSchema) as ToolInput,
+  },
+  {
+    name: ToolName.RUN_PERFORMANCE_SNAPSHOT,
+    description:
+      'Collect web performance metrics (timing, navigation, resources, paint), optional console errors, and optional screenshot for a running Electron window.',
+    inputSchema: zodToJsonSchema(RunPerformanceSnapshotSchema) as ToolInput,
+  },
+  {
+    name: ToolName.RUN_DEVTOOLS_TRACE,
+    description:
+      'Record a DevTools trace for a short duration and return summarized insights of long tasks and top categories.',
+    inputSchema: zodToJsonSchema(RunDevToolsTraceSchema) as ToolInput,
   },
   {
     name: ToolName.SEND_COMMAND_TO_ELECTRON,
@@ -65,5 +85,17 @@ Use 'get_page_structure' or 'debug_elements' first to understand available eleme
     description:
       'Read console logs and output from running Electron applications. Useful for debugging and monitoring app behavior.',
     inputSchema: zodToJsonSchema(ReadElectronLogsSchema) as ToolInput,
+  },
+  {
+    name: ToolName.RUN_AUTOMATION_SCRIPT,
+    description:
+      'Run a sequence of UI automation commands (click, fill, select, navigate) with optional pre/post screenshots and logs collection.',
+    inputSchema: zodToJsonSchema(RunAutomationScriptSchema) as ToolInput,
+  },
+  {
+    name: ToolName.CAPTURE_NETWORK_SNAPSHOT,
+    description:
+      'Capture Network activity for a short window and summarize slow requests and errors.',
+    inputSchema: zodToJsonSchema(CaptureNetworkSnapshotSchema) as ToolInput,
   },
 ];

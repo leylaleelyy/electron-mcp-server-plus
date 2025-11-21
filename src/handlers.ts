@@ -8,11 +8,14 @@ import {
   GetElectronWindowInfoSchema,
 } from './schemas';
 import { sendCommandToElectron } from './utils/electron-enhanced-commands';
+import { collectPerformanceSnapshot, runAutomationScript } from './utils/electron-enhanced-commands';
 import { getElectronWindowInfo } from './utils/electron-discovery';
 import { readElectronLogs } from './utils/electron-logs';
 import { takeScreenshot } from './screenshot';
 import { logger } from './utils/logger';
 import { securityManager } from './security/manager';
+import { runDevToolsTrace } from './utils/devtools-tracing';
+import { captureNetworkSnapshot } from './utils/devtools-network';
 
 export async function handleToolCall(request: z.infer<typeof CallToolRequestSchema>) {
   const { name, arguments: args } = request.params;
@@ -150,6 +153,77 @@ export async function handleToolCall(request: z.infer<typeof CallToolRequestSche
           content: [{ type: 'text', text: result }],
           isError: false,
         };
+      }
+
+      case ToolName.RUN_PERFORMANCE_SNAPSHOT: {
+        const { includeResources, includeNavigation, collectConsoleErrors, captureScreenshot, outputPath, windowTitle, metricsOnly, includeWebVitals } = (args as any) || {};
+        const securityResult = await securityManager.executeSecurely({
+          command: 'run_performance_snapshot',
+          args,
+          sourceIP,
+          userAgent,
+          operationType: 'diagnostic',
+        });
+        if (securityResult.blocked) {
+          return { content: [{ type: 'text', text: `Operation blocked: ${securityResult.error}` }], isError: true };
+        }
+        const snapshot = await collectPerformanceSnapshot({ includeResources, includeNavigation, collectConsoleErrors, captureScreenshot, outputPath, windowTitle, includeWebVitals });
+        const content: any[] = [{ type: 'text', text: `Performance Snapshot:\n\n${snapshot.report}` }];
+        if (snapshot.screenshotBase64 && !metricsOnly) {
+          content.push({ type: 'image', data: snapshot.screenshotBase64, mimeType: 'image/png' });
+        }
+        return { content, isError: false };
+      }
+
+      case ToolName.RUN_AUTOMATION_SCRIPT: {
+        const { steps, preScreenshot, postScreenshot, outputPath, windowTitle, includeLogs, logLines, usePlaywright } = (args as any) || {};
+        const securityResult = await securityManager.executeSecurely({
+          command: 'run_automation_script',
+          args,
+          sourceIP,
+          userAgent,
+          operationType: 'command',
+        });
+        if (securityResult.blocked) {
+          return { content: [{ type: 'text', text: `Operation blocked: ${securityResult.error}` }], isError: true };
+        }
+        const result = await runAutomationScript(steps || [], { preScreenshot, postScreenshot, outputPath, windowTitle, includeLogs, logLines, usePlaywright });
+        const content: any[] = [{ type: 'text', text: `Automation Script Result:\n\n${result.summary}` }];
+        if (result.preShot) content.push({ type: 'image', data: result.preShot, mimeType: 'image/png' });
+        if (result.postShot) content.push({ type: 'image', data: result.postShot, mimeType: 'image/png' });
+        return { content, isError: false };
+      }
+
+      case ToolName.RUN_DEVTOOLS_TRACE: {
+        const { durationMs, categories } = (args as any) || {};
+        const securityResult = await securityManager.executeSecurely({
+          command: 'run_devtools_trace',
+          args,
+          sourceIP,
+          userAgent,
+          operationType: 'diagnostic',
+        });
+        if (securityResult.blocked) {
+          return { content: [{ type: 'text', text: `Operation blocked: ${securityResult.error}` }], isError: true };
+        }
+        const report = await runDevToolsTrace({ durationMs, categories });
+        return { content: [{ type: 'text', text: `DevTools Trace Summary:\n\n${report}` }], isError: false };
+      }
+
+      case ToolName.CAPTURE_NETWORK_SNAPSHOT: {
+        const { durationMs, idleMs, maxRequests, includeFailures } = (args as any) || {};
+        const securityResult = await securityManager.executeSecurely({
+          command: 'capture_network_snapshot',
+          args,
+          sourceIP,
+          userAgent,
+          operationType: 'diagnostic',
+        });
+        if (securityResult.blocked) {
+          return { content: [{ type: 'text', text: `Operation blocked: ${securityResult.error}` }], isError: true };
+        }
+        const report = await captureNetworkSnapshot({ durationMs, idleMs, maxRequests, includeFailures });
+        return { content: [{ type: 'text', text: `Network Snapshot:\n\n${report}` }], isError: false };
       }
 
       case ToolName.READ_ELECTRON_LOGS: {

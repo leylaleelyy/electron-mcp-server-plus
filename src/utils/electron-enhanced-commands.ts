@@ -1,4 +1,8 @@
 import { executeInElectron, findElectronTarget } from './electron-connection';
+import { takeScreenshot } from '../screenshot';
+import { chromium } from 'playwright';
+import { scanForElectronApps } from './electron-discovery';
+import { readElectronLogs } from './electron-logs';
 import { generateFindElementsCommand, generateClickByTextCommand } from './electron-commands';
 import {
   generateFillInputCommand,
@@ -35,6 +39,53 @@ export async function sendCommandToElectron(command: string, args?: CommandArgs)
       case 'get_body_text':
         javascriptCode = 'document.body.innerText.substring(0, 500)';
         break;
+
+      case 'wait_for_selector': {
+        const sel = args?.selector || '';
+        const timeout =  args?.value ? parseInt(args?.value) : 5000;
+        if (!sel) return 'ERROR: Missing selector. Use {"selector":"...","value":"timeoutMs"}';
+        const start = Date.now();
+        while (Date.now() - start < timeout) {
+          const res = await executeInElectron(`document.querySelector(${JSON.stringify(sel)}) ? '1' : '0'`, target);
+          if (res.includes('1')) return `✅ Selector available: ${sel}`;
+          await new Promise((r) => setTimeout(r, 200));
+        }
+        return `❌ Timeout waiting for selector: ${sel}`;
+      }
+
+      case 'wait_for_url_includes': {
+        const text = args?.text || '';
+        const timeout = args?.value ? parseInt(args?.value) : 5000;
+        if (!text) return 'ERROR: Missing text. Use {"text":"url-part","value":"timeoutMs"}';
+        const start = Date.now();
+        while (Date.now() - start < timeout) {
+          const res = await executeInElectron('window.location.href', target);
+          const url = res.replace(/^✅ Result: /, '');
+          if (url.includes(text)) return `✅ URL includes: ${text}`;
+          await new Promise((r) => setTimeout(r, 200));
+        }
+        return `❌ Timeout waiting for url includes: ${text}`;
+      }
+
+      case 'wait_for_idle': {
+        const idleMs = args?.value ? parseInt(args?.value) : 800;
+        const timeout = args?.text ? parseInt(args?.text) : 5000;
+        const start = Date.now();
+        let last = 0;
+        let lastChange = Date.now();
+        while (Date.now() - start < timeout) {
+          const raw = await executeInElectron(`performance.getEntriesByType('resource').length.toString()`, target);
+          const numStr = raw.replace(/^✅ Result: /, '').trim();
+          const num = parseInt(numStr) || 0;
+          if (num !== last) {
+            last = num;
+            lastChange = Date.now();
+          }
+          if (Date.now() - lastChange > idleMs) return `✅ Idle for ${idleMs}ms`;
+          await new Promise((r) => setTimeout(r, 200));
+        }
+        return `❌ Timeout waiting for idle`;
+      }
 
       case 'click_button':
         // Validate and escape selector input
@@ -561,4 +612,248 @@ export async function getUrl(): Promise<string> {
 
 export async function getBodyText(): Promise<string> {
   return sendCommandToElectron('get_body_text');
+}
+
+function extractJson(input: string): any {
+  try {
+    const start = input.indexOf('{');
+    const end = input.lastIndexOf('}');
+    if (start >= 0 && end > start) {
+      const jsonStr = input.substring(start, end + 1);
+      return JSON.parse(jsonStr);
+    }
+  } catch {}
+  return { raw: input };
+}
+
+export async function collectPerformanceSnapshot(options?: {
+  includeResources?: boolean;
+  includeNavigation?: boolean;
+  collectConsoleErrors?: boolean;
+  captureScreenshot?: boolean;
+  outputPath?: string;
+  windowTitle?: string;
+  includeWebVitals?: boolean;
+}): Promise<{ report: string; screenshotBase64?: string }> {
+  const target = await findElectronTarget();
+  const code = `(() => { try { const now = performance.now(); const timing = performance.timing || {}; const nav = performance.getEntriesByType('navigation'); const res = performance.getEntriesByType('resource'); const paint = performance.getEntriesByType('paint'); const data = { now, timing, navigation: nav, resources: res.map(r => ({ name: r.name, initiatorType: r.initiatorType, startTime: r.startTime, duration: r.duration, transferSize: r.transferSize })), paint }; return JSON.stringify(data); } catch(e) { return JSON.stringify({ error: e.message }); } })()`;
+  const raw = await executeInElectron(code, target);
+  const parsed = extractJson(raw) || {};
+  let logsSummary = '';
+  if (options?.collectConsoleErrors) {
+    const logs = await readElectronLogs('console', 200);
+    const lines = logs.split('\n').filter((l) => /ERROR|TypeError|ReferenceError|Unhandled|Failed/i.test(l)).slice(-20);
+    logsSummary = lines.join('\n');
+  }
+  let screenshotBase64: string | undefined;
+  if (options?.captureScreenshot) {
+    const shot = await takeScreenshot(options.outputPath, options.windowTitle);
+    screenshotBase64 = shot.base64;
+  }
+  let vitals: any = undefined;
+  if (options?.includeWebVitals) {
+    const vitalsCode = `(() => {
+      try {
+        const metrics = { fcp: null, lcp: null, cls: 0, inp: null };
+        const perf = window.performance;
+        const po = new PerformanceObserver((list) => {
+          for (const entry of list.getEntries()) {
+            if (entry.name === 'first-contentful-paint') metrics.fcp = entry.startTime;
+            if (entry.entryType === 'largest-contentful-paint') metrics.lcp = entry.startTime;
+            if (entry.name === 'layout-shift' && !entry.hadRecentInput) metrics.cls += entry.value;
+            if (entry.entryType === 'event' && entry.name === 'click') metrics.inp = entry.duration;
+          }
+        });
+        try { po.observe({ type: 'largest-contentful-paint', buffered: true }); } catch {}
+        try { po.observe({ type: 'layout-shift', buffered: true }); } catch {}
+        try { po.observe({ type: 'paint', buffered: true }); } catch {}
+        return JSON.stringify(metrics);
+      } catch (e) { return JSON.stringify({ error: e.message }); }
+    })()`;
+    const vitalsRaw = await executeInElectron(vitalsCode, target);
+    vitals = extractJson(vitalsRaw);
+  }
+  const pick = (obj: any, keys: string[]) => keys.reduce((acc: any, k) => { if (obj && obj[k] != null) acc[k] = obj[k]; return acc; }, {});
+  const metrics = {
+    now: parsed?.now,
+    timing: pick(parsed?.timing || {}, ['navigationStart','responseStart','domContentLoadedEventStart','domContentLoadedEventEnd','loadEventStart','loadEventEnd']),
+    navigation: options?.includeNavigation ? parsed?.navigation : undefined,
+    resources: options?.includeResources ? parsed?.resources?.slice(0, 50) : undefined,
+    paint: parsed?.paint,
+  };
+  const reportObj: any = { metrics, logs: logsSummary, webVitals: vitals };
+  const report = JSON.stringify(reportObj, null, 2);
+  return { report, screenshotBase64 };
+}
+
+export async function runAutomationScript(
+  steps: Array<{ command: string; args?: CommandArgs }>,
+  options?: {
+    preScreenshot?: boolean;
+    postScreenshot?: boolean;
+    outputPath?: string;
+    windowTitle?: string;
+    includeLogs?: boolean;
+    logLines?: number;
+    usePlaywright?: boolean;
+  },
+): Promise<{ summary: string; preShot?: string; postShot?: string }> {
+  if (options?.usePlaywright) {
+    const result = await runAutomationScriptPW(steps, options);
+    return result;
+  }
+  let preShot: string | undefined;
+  if (options?.preScreenshot) {
+    const shot = await takeScreenshot(options.outputPath, options.windowTitle);
+    preShot = shot.base64;
+  }
+  const results: Array<{ command: string; result: string }> = [];
+  for (const step of steps) {
+    const res = await sendCommandToElectron(step.command, step.args);
+    results.push({ command: step.command, result: res });
+  }
+  let postShot: string | undefined;
+  if (options?.postScreenshot) {
+    const shot = await takeScreenshot(options.outputPath, options.windowTitle);
+    postShot = shot.base64;
+  }
+  let logs = '';
+  if (options?.includeLogs) {
+    const text = await readElectronLogs('console', options?.logLines || 200);
+    logs = text.split('\n').slice(-(options?.logLines || 200)).join('\n');
+  }
+  const summary = JSON.stringify({ steps: results, logs }, null, 2);
+  return { summary, preShot, postShot };
+}
+
+async function getTargetPage(windowTitle?: string) {
+  const apps = await scanForElectronApps();
+  if (apps.length === 0) throw new Error('No Electron apps with DevTools');
+  let targetApp = apps[0];
+  if (windowTitle) {
+    const named = apps.find((a) => a.targets.some((t: any) => t.title?.toLowerCase().includes(windowTitle.toLowerCase())));
+    if (named) targetApp = named;
+  }
+  const browser = await chromium.connectOverCDP(`http://localhost:${targetApp.port}`);
+  const contexts = browser.contexts();
+  if (contexts.length === 0) throw new Error('No contexts');
+  const pages = contexts[0].pages();
+  let page = pages[0];
+  for (const p of pages) {
+    const url = p.url();
+    const title = await p.title().catch(() => '');
+    if (!url.includes('devtools://') && !url.includes('about:blank') && title && !title.includes('DevTools')) { page = p; break; }
+  }
+  return { browser, page };
+}
+
+export async function runAutomationScriptPW(
+  steps: Array<{ command: string; args?: CommandArgs }>,
+  options?: {
+    preScreenshot?: boolean;
+    postScreenshot?: boolean;
+    outputPath?: string;
+    windowTitle?: string;
+    includeLogs?: boolean;
+    logLines?: number;
+  },
+): Promise<{ summary: string; preShot?: string; postShot?: string }> {
+  const { browser, page } = await getTargetPage(options?.windowTitle);
+  let preShot: string | undefined;
+  if (options?.preScreenshot) {
+    const buf = await page.screenshot({ type: 'png' });
+    preShot = buf.toString('base64');
+  }
+  const results: Array<{ command: string; result: string }> = [];
+  for (const step of steps) {
+    let r = 'ok';
+    try {
+      switch (step.command) {
+        case 'wait_for_selector': {
+          const sel = step.args?.selector || '';
+          const timeout = step.args?.value ? parseInt(step.args?.value) : 5000;
+          await page.waitForSelector(sel, { timeout });
+          r = `selector ready: ${sel}`;
+          break;
+        }
+        case 'wait_for_url_includes': {
+          const text = step.args?.text || '';
+          const timeout = step.args?.value ? parseInt(step.args?.value) : 5000;
+          await page.waitForFunction((t) => window.location.href.includes(t as any), text, { timeout });
+          r = `url includes: ${text}`;
+          break;
+        }
+        case 'wait_for_idle': {
+          await page.waitForLoadState('networkidle');
+          r = 'network idle';
+          break;
+        }
+        case 'click_by_selector': {
+          const sel = step.args?.selector || '';
+          await page.locator(sel).click();
+          r = `clicked: ${sel}`;
+          break;
+        }
+        case 'click_by_text': {
+          const text = step.args?.text || '';
+          await page.getByText(text, { exact: true }).first().click();
+          r = `clicked text: ${text}`;
+          break;
+        }
+        case 'fill_input': {
+          const sel = step.args?.selector;
+          const placeholder = step.args?.text || step.args?.placeholder;
+          const value = step.args?.value || '';
+          if (sel) await page.locator(sel).fill(value);
+          else if (placeholder) await page.getByPlaceholder(placeholder).fill(value);
+          r = 'filled input';
+          break;
+        }
+        case 'select_option': {
+          const sel = step.args?.selector || 'select';
+          const value = step.args?.value || '';
+          await page.locator(sel).selectOption({ value });
+          r = `selected: ${value}`;
+          break;
+        }
+        case 'send_keyboard_shortcut': {
+          const text = step.args?.text || '';
+          const parts = text.split('+');
+          const key = parts[parts.length - 1];
+          const mods = parts.slice(0, -1).map((m) => m.toLowerCase());
+          await page.keyboard.down(mods.includes('ctrl') ? 'Control' : undefined as any).catch(() => {});
+          await page.keyboard.down(mods.includes('shift') ? 'Shift' : undefined as any).catch(() => {});
+          await page.keyboard.down(mods.includes('alt') ? 'Alt' : undefined as any).catch(() => {});
+          await page.keyboard.down(mods.includes('meta') || mods.includes('cmd') ? 'Meta' : undefined as any).catch(() => {});
+          await page.keyboard.press(key);
+          await page.keyboard.up('Control').catch(() => {});
+          await page.keyboard.up('Shift').catch(() => {});
+          await page.keyboard.up('Alt').catch(() => {});
+          await page.keyboard.up('Meta').catch(() => {});
+          r = `shortcut: ${text}`;
+          break;
+        }
+        case 'navigate_to_hash': {
+          const hash = step.args?.text || '';
+          await page.evaluate((h) => { if (window.history && window.history.pushState) { const u = window.location.pathname + window.location.search + (h.startsWith('#')?h:'#'+h); window.history.pushState({}, '', u); window.dispatchEvent(new HashChangeEvent('hashchange')); } else { window.location.hash = h; } }, hash);
+          r = `navigated: ${hash}`;
+          break;
+        }
+        default: {
+          r = 'unsupported command';
+        }
+      }
+    } catch (e: any) {
+      r = `error: ${e?.message || String(e)}`;
+    }
+    results.push({ command: step.command, result: r });
+  }
+  let postShot: string | undefined;
+  if (options?.postScreenshot) {
+    const buf = await page.screenshot({ type: 'png' });
+    postShot = buf.toString('base64');
+  }
+  await browser.close();
+  const summary = JSON.stringify({ steps: results }, null, 2);
+  return { summary, preShot, postShot };
 }

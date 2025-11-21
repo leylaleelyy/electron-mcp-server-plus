@@ -20,7 +20,7 @@ export interface SecureExecutionContext {
   args?: any;
   sourceIP?: string;
   userAgent?: string;
-  operationType: 'command' | 'screenshot' | 'logs' | 'window_info';
+  operationType: 'command' | 'screenshot' | 'logs' | 'window_info' | "diagnostic";
 }
 
 export interface SecureExecutionResult {

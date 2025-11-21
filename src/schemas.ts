@@ -59,6 +59,53 @@ export const GetElectronWindowInfoSchema = z.object({
   includeChildren: z.boolean().optional().describe('Include child windows information'),
 });
 
+export const RunPerformanceSnapshotSchema = z
+  .object({
+    includeResources: z.boolean().optional(),
+    includeNavigation: z.boolean().optional(),
+    collectConsoleErrors: z.boolean().optional(),
+    captureScreenshot: z.boolean().optional(),
+    outputPath: z.string().optional(),
+    windowTitle: z.string().optional(),
+    metricsOnly: z.boolean().optional(),
+    includeWebVitals: z.boolean().optional(),
+  })
+  .describe('Collect performance metrics, optional logs, and optional screenshot');
+
+export const RunDevToolsTraceSchema = z
+  .object({
+    durationMs: z.number().optional(),
+    categories: z.array(z.string()).optional(),
+  })
+  .describe('Record a DevTools trace and return summarized insights');
+
+export const CaptureNetworkSnapshotSchema = z
+  .object({
+    durationMs: z.number().optional(),
+    idleMs: z.number().optional(),
+    maxRequests: z.number().optional(),
+    includeFailures: z.boolean().optional(),
+  })
+  .describe('Capture a Network snapshot with slow requests and errors');
+
+const AutomationStepSchema = z.object({
+  command: z.string().describe('Command to execute, e.g., click_by_text, fill_input'),
+  args: CommandArgsSchema.optional(),
+});
+
+export const RunAutomationScriptSchema = z
+  .object({
+    steps: z.array(AutomationStepSchema).min(1).describe('Ordered automation steps'),
+    preScreenshot: z.boolean().optional(),
+    postScreenshot: z.boolean().optional(),
+    outputPath: z.string().optional(),
+    windowTitle: z.string().optional(),
+    includeLogs: z.boolean().optional(),
+    logLines: z.number().optional(),
+    usePlaywright: z.boolean().optional(),
+  })
+  .describe('Run a sequence of UI automation commands with optional screenshots and logs');
+
 // Type helper for tool input schema
 export type ToolInput = {
   type: 'object';

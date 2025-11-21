@@ -6,6 +6,31 @@
 
 A powerful Model Context Protocol (MCP) server that provides comprehensive Electron application automation, debugging, and observability capabilities. Supercharge your Electron development workflow with AI-powered automation through Chrome DevTools Protocol integration.
 
+## 🗺️ Architecture Overview
+
+```mermaid
+flowchart LR
+  client([MCP Client]) --> index["src/index.ts\nServer bootstrap"]
+  index --> tools["src/tools.ts\nTool catalog & JSON schemas"]
+  index --> handlers["src/handlers.ts\nTool dispatcher"]
+
+  handlers --> security["src/security/manager.ts\nValidation, risk, sandbox, audit"]
+  security --> validation["src/security/validation.ts\nInput/risk checks"]
+  security --> sandbox["src/security/sandbox.ts\nOptional JS sandbox"]
+  security --> audit["src/security/audit.ts\nAudit trail"]
+  security --> config["SECURITY_CONFIG.md + env\nSecurity presets"]
+
+  handlers --> discovery["src/utils/electron-discovery.ts\nWindow detection"]
+  handlers --> screenshot["src/screenshot.ts\nPNG capture + base64"]
+  handlers --> commands["src/utils/electron-enhanced-commands.ts\nElectron command bridge"]
+  handlers --> logs["src/utils/electron-logs.ts\nConsole/renderer log reader"]
+```
+
+- **Server bootstrap (`src/index.ts`)** wires the MCP server, registers tools, and streams requests over stdio.
+- **Tool catalog (`src/tools.ts` + `src/schemas.ts`)** exposes the supported commands with Zod schemas exported as JSON Schema for client-side validation.
+- **Request dispatcher (`src/handlers.ts`)** validates tool arguments, invokes the security manager, and routes calls to Electron command, screenshot, discovery, or log utilities.
+- **Defense-in-depth (`src/security/*`)** layers input validation, risk scoring, optional sandboxing, and audit logging while honoring security level presets from environment variables or `SECURITY_CONFIG.md`.
+
 ## Demo
 
 See the Electron MCP Server in action:
@@ -42,6 +67,7 @@ Transform your Electron development experience with **AI-powered automation**:
 Configure the security level and other settings through your MCP client configuration:
 
 **VS Code MCP Settings:**
+
 ```json
 {
   "mcp": {
@@ -60,6 +86,7 @@ Configure the security level and other settings through your MCP client configur
 ```
 
 **Claude Desktop Configuration:**
+
 ```json
 {
   "mcpServers": {
@@ -76,6 +103,7 @@ Configure the security level and other settings through your MCP client configur
 ```
 
 **Alternative: Local .env file (for development):**
+
 ```bash
 # Create .env file in your project directory
 SECURITY_LEVEL=balanced
@@ -84,12 +112,12 @@ SCREENSHOT_ENCRYPTION_KEY=your-32-byte-hex-string
 
 **Security Level Behaviors:**
 
-| Level | UI Interactions | DOM Queries | Property Access | Assignments | Function Calls | Risk Threshold |
-|-------|-----------------|-------------|-----------------|-------------|----------------|----------------|
-| `strict` | ❌ Blocked | ❌ Blocked | ✅ Allowed | ❌ Blocked | ❌ None allowed | Low |
-| `balanced` | ✅ Allowed | ✅ Allowed | ✅ Allowed | ❌ Blocked | ✅ Safe UI functions | Medium |
-| `permissive` | ✅ Allowed | ✅ Allowed | ✅ Allowed | ✅ Allowed | ✅ Extended UI functions | High |
-| `development` | ✅ Allowed | ✅ Allowed | ✅ Allowed | ✅ Allowed | ✅ All functions | Critical |
+| Level           | UI Interactions | DOM Queries | Property Access | Assignments | Function Calls           | Risk Threshold |
+| --------------- | --------------- | ----------- | --------------- | ----------- | ------------------------ | -------------- |
+| `strict`      | ❌ Blocked      | ❌ Blocked  | ✅ Allowed      | ❌ Blocked  | ❌ None allowed          | Low            |
+| `balanced`    | ✅ Allowed      | ✅ Allowed  | ✅ Allowed      | ❌ Blocked  | ✅ Safe UI functions     | Medium         |
+| `permissive`  | ✅ Allowed      | ✅ Allowed  | ✅ Allowed      | ✅ Allowed  | ✅ Extended UI functions | High           |
+| `development` | ✅ Allowed      | ✅ Allowed  | ✅ Allowed      | ✅ Allowed  | ✅ All functions         | Critical       |
 
 **Environment Setup:**
 
@@ -162,14 +190,14 @@ See [SECURITY_CONFIG.md](./SECURITY_CONFIG.md) for detailed security documentati
 
 ### 📋 Command Argument Reference
 
-| Command                                 | Required Args                                                                       | Example                                          |
-| --------------------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------ |
-| `click_by_selector`                     | `{"selector": "css-selector"}`                                                      | `{"selector": "button.primary"}`                 |
-| `click_by_text`                         | `{"text": "button text"}`                                                           | `{"text": "Submit"}`                             |
-| `fill_input`                            | `{"value": "text", "selector": "..."}` or `{"value": "text", "placeholder": "..."}` | `{"placeholder": "Enter name", "value": "John"}` |
-| `send_keyboard_shortcut`                | `{"text": "key combination"}`                                                       | `{"text": "Ctrl+N"}`                             |
-| `eval`                                  | `{"code": "javascript"}`                                                            | `{"code": "document.title"}`                     |
-| `get_title`, `get_url`, `get_body_text` | No args needed                                                                      | `{}` or omit args                                |
+| Command                                       | Required Args                                                                           | Example                                            |
+| --------------------------------------------- | --------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `click_by_selector`                         | `{"selector": "css-selector"}`                                                        | `{"selector": "button.primary"}`                 |
+| `click_by_text`                             | `{"text": "button text"}`                                                             | `{"text": "Submit"}`                             |
+| `fill_input`                                | `{"value": "text", "selector": "..."}` or `{"value": "text", "placeholder": "..."}` | `{"placeholder": "Enter name", "value": "John"}` |
+| `send_keyboard_shortcut`                    | `{"text": "key combination"}`                                                         | `{"text": "Ctrl+N"}`                             |
+| `eval`                                      | `{"code": "javascript"}`                                                              | `{"code": "document.title"}`                     |
+| `get_title`, `get_url`, `get_body_text` | No args needed                                                                          | `{}` or omit args                                |
 
 ### 🔄 Recommended Workflow
 
@@ -212,12 +240,12 @@ See [SECURITY_CONFIG.md](./SECURITY_CONFIG.md) for detailed security documentati
 
 ### 🐛 Troubleshooting Common Issues
 
-| Error                            | Cause                            | Solution                       |
-| -------------------------------- | -------------------------------- | ------------------------------ |
+| Error                            | Cause                            | Solution                         |
+| -------------------------------- | -------------------------------- | -------------------------------- |
 | "The provided selector is empty" | Passing string instead of object | Use `{"selector": "..."}`      |
 | "Element not found"              | Wrong selector                   | Use `get_page_structure` first |
-| "Command blocked"                | Security restriction             | Check security level settings  |
-| "Click prevented - too soon"     | Rapid consecutive clicks         | Wait before retrying           |
+| "Command blocked"                | Security restriction             | Check security level settings    |
+| "Click prevented - too soon"     | Rapid consecutive clicks         | Wait before retrying             |
 
 ## 🛠️ Security Features
 
