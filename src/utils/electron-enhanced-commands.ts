@@ -1,4 +1,4 @@
-import { executeInElectron, findElectronTarget } from './electron-connection';
+import { executeInElectron, findElectronTarget, DevToolsTarget } from './electron-connection';
 import { takeScreenshot } from '../screenshot';
 import { chromium } from 'playwright';
 import { scanForElectronApps } from './electron-discovery';
@@ -17,6 +17,7 @@ export interface CommandArgs {
   placeholder?: string;
   message?: string;
   code?: string;
+  wsUrl?: string;
 }
 
 /**
@@ -24,7 +25,18 @@ export interface CommandArgs {
  */
 export async function sendCommandToElectron(command: string, args?: CommandArgs): Promise<string> {
   try {
-    const target = await findElectronTarget();
+    let target: DevToolsTarget | undefined;
+    if (args?.wsUrl) {
+      target = {
+        id: 'override',
+        title: 'override',
+        url: 'override',
+        webSocketDebuggerUrl: args.wsUrl,
+        type: 'page',
+      };
+    } else {
+      target = await findElectronTarget();
+    }
     let javascriptCode: string;
 
     switch (command.toLowerCase()) {

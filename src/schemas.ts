@@ -27,6 +27,7 @@ export const CommandArgsSchema = z
       ),
     message: z.string().optional().describe('Message or content for specific commands'),
     code: z.string().optional().describe('JavaScript code to execute (for eval command)'),
+    wsUrl: z.string().optional().describe('Override DevTools WebSocket URL for direct target selection'),
   })
   .describe('Command-specific arguments. Structure depends on the command being executed.');
 

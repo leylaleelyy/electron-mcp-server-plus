@@ -8,6 +8,7 @@ export interface DevToolsTarget {
   url: string;
   webSocketDebuggerUrl: string;
   type: string;
+
 }
 
 export interface CommandResult {
